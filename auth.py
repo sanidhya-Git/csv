@@ -24,14 +24,12 @@ def reset_password(email, new_password):
     conn = sqlite3.connect("users.db")
     cursor = conn.cursor()
 
-
     cursor.execute("SELECT * FROM users WHERE email = ?", (email,))
     if cursor.fetchone() is None:
         conn.close()
         return False
 
-
-    cursor.execute("INSERT INTO reset_requests (email, new_password) VALUES (?, ?)", (email, new_password))
+    cursor.execute("UPDATE users SET password = ? WHERE email = ?", (new_password, email))
     conn.commit()
     conn.close()
     return True

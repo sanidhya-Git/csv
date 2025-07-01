@@ -9,12 +9,5 @@ def create_user_table():
             password TEXT NOT NULL
         )
     ''')
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS reset_requests (
-            email TEXT,
-            new_password TEXT,
-            requested_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
     conn.commit()
     conn.close()

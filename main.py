@@ -78,6 +78,39 @@ def dashboard():
 
         st.subheader("📌 Correlation Matrix")
         st.markdown(report["Correlation"], unsafe_allow_html=True)
+
+       
+        numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+
+        if numeric_cols:
+            st.subheader("📈 Visualize Data")
+
+            chart_type = st.selectbox("Choose chart type", ["Scatter Plot", "Histogram", "Box Plot", "Correlation Heatmap"])
+
+            if chart_type == "Scatter Plot":
+                x_axis = st.selectbox("X-axis", numeric_cols)
+                y_axis = st.selectbox("Y-axis", numeric_cols, index=1 if len(numeric_cols) > 1 else 0)
+                fig = px.scatter(df, x=x_axis, y=y_axis, title=f"Scatter Plot of {x_axis} vs {y_axis}")
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif chart_type == "Histogram":
+                col = st.selectbox("Select column for histogram", numeric_cols)
+                fig = px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}")
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif chart_type == "Box Plot":
+                col = st.selectbox("Select column for box plot", numeric_cols)
+                fig = px.box(df, y=col, title=f"Box Plot of {col}")
+                st.plotly_chart(fig, use_container_width=True)
+
+            elif chart_type == "Correlation Heatmap":
+                corr = df.corr(numeric_only=True)
+                fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation Heatmap")
+                st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No numeric columns available for plotting.")
+
+
         if st.button("📄 Export Insights as PDF"):
             pdf_bytes = pdf_report.generate_pdf(report, st.session_state.email)
             st.download_button(
@@ -105,36 +138,3 @@ if not st.session_state.logged_in:
 else:
     dashboard()
 
-
-        # ===== PLOTLY GRAPHS =====
-        # numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
-
-        # if numeric_cols:
-        #     st.subheader("📈 Visualize Data")
-
-        #     chart_type = st.selectbox("Choose chart type", ["Scatter Plot", "Histogram", "Box Plot", "Correlation Heatmap"])
-
-        #     if chart_type == "Scatter Plot":
-        #         x_axis = st.selectbox("X-axis", numeric_cols)
-        #         y_axis = st.selectbox("Y-axis", numeric_cols, index=1 if len(numeric_cols) > 1 else 0)
-        #         fig = px.scatter(df, x=x_axis, y=y_axis, title=f"Scatter Plot of {x_axis} vs {y_axis}")
-        #         st.plotly_chart(fig, use_container_width=True)
-
-        #     elif chart_type == "Histogram":
-        #         col = st.selectbox("Select column for histogram", numeric_cols)
-        #         fig = px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}")
-        #         st.plotly_chart(fig, use_container_width=True)
-
-        #     elif chart_type == "Box Plot":
-        #         col = st.selectbox("Select column for box plot", numeric_cols)
-        #         fig = px.box(df, y=col, title=f"Box Plot of {col}")
-        #         st.plotly_chart(fig, use_container_width=True)
-
-        #     elif chart_type == "Correlation Heatmap":
-        #         corr = df.corr(numeric_only=True)
-        #         fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation Heatmap")
-        #         st.plotly_chart(fig, use_container_width=True)
-        # else:
-        #     st.info("No numeric columns available for plotting.")
-
-        # ===== PDF Export Button ====
