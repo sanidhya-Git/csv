@@ -1,7 +1,8 @@
-import sqlite3
+import psycopg2
+import os
 
 def create_user_table():
-    conn = sqlite3.connect("users.db")
+    conn = psycopg2.connect(os.environ["DATABASE_URL"], sslmode='require')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS users (
