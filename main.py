@@ -1,140 +1,363 @@
 import streamlit as st
 import plotly.express as px
-from auth import signup_user, login_user, reset_password
-from database import create_user_table
+
+from auth import signup_user
+from otp import generate_otp, send_otp
+from database import (
+    init_db,
+    get_user,
+    record_upload,
+    monthly_upload_count
+)
 from analyze import analyze_csv
-import pdf_report  
+from ai import generate_ai_insights
+from pdf_report import generate_pdf
 
-st.set_page_config(page_title="CSV Analyzer", page_icon="📊", layout="centered")
+FREE_LIMIT = 15
+ADMIN_EMAIL = "admin@csv.com"
 
-create_user_table()
+st.set_page_config(
+    page_title="CSV Analyzer",
+    page_icon="📊",
+    layout="wide"
+)
 
-if "logged_in" not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.email = ""
 
-def login_page():
-    st.title("🔐 Login")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    if st.button("Login"):
-        if login_user(email, password):
-            st.session_state.logged_in = True
-            st.session_state.email = email
-            st.success("Logged in successfully!")
+st.markdown("""
+<style>
+.stApp {
+    background-color: #0e1117;
+    color: white;
+}
+
+section[data-testid="stSidebar"] {
+    background-color: #111827;
+}
+
+div[data-testid="stMetric"] {
+    background: #1f2937;
+    padding: 15px;
+    border-radius: 12px;
+}
+
+.stButton > button {
+    width: 100%;
+    border-radius: 8px;
+}
+
+table {
+    color: white !important;
+}
+</style>
+""", unsafe_allow_html=True)
+
+
+init_db()
+
+if "user" not in st.session_state:
+    st.session_state.user = None
+
+if "otp_sent" not in st.session_state:
+    st.session_state.otp_sent = False
+
+if "login_otp" not in st.session_state:
+    st.session_state.login_otp = ""
+
+if "login_email" not in st.session_state:
+    st.session_state.login_email = ""
+
+if not st.session_state.user:
+
+    st.title("📊 CSV Analyzer V2")
+    st.caption("Upload CSV • Analyze • Visualize • Export")
+
+    tab1, tab2 = st.tabs(["OTP Login", "Signup"])
+
+
+    with tab1:
+
+        email = st.text_input("Email", key="login_email_input")
+
+        if not st.session_state.otp_sent:
+
+            if st.button("Send OTP"):
+
+                if email.strip() == "":
+                    st.error("Enter email first")
+
+                else:
+                    otp = generate_otp()
+
+                    st.session_state.login_otp = otp
+                    st.session_state.login_email = email.strip()
+                    st.session_state.otp_sent = True
+
+                    try:
+                        send_otp(email.strip(), otp)
+                        st.success("OTP sent successfully")
+                    except Exception as e:
+                        st.error(f"OTP failed: {e}")
+
         else:
-            st.error("Invalid credentials")
-    st.info("Don't have an account? Go to Signup.")
-    if st.button("Go to Signup"):
-        st.session_state.page = "signup"
-    st.info("Forgot your password?")
-    if st.button("Reset Password"):
-        st.session_state.page = "reset"
 
-def signup_page():
-    st.title("📝 Signup")
-    email = st.text_input("Email")
-    password = st.text_input("Password", type="password")
-    if st.button("Register"):
-        if signup_user(email, password):
-            st.success("Signup successful! Please login.")
-            st.session_state.page = "login"
-        else:
-            st.error("User already exists.")
-    if st.button("Go to Login"):
-        st.session_state.page = "login"
+            entered_otp = st.text_input("Enter OTP")
 
-def reset_page():
-    st.title("🔁 Reset Password")
-    email = st.text_input("Email")
-    new_pass = st.text_input("New Password", type="password")
-    if st.button("Update Password"):
-        if reset_password(email, new_pass):
-            st.success("Password updated. Please login.")
-            st.session_state.page = "login"
-        else:
-            st.error("Email not found.")
-    if st.button("Back to Login"):
-        st.session_state.page = "login"
+            if st.button("Verify OTP"):
 
-def dashboard():
-    st.title("📊 CSV Analyzer Dashboard")
-    st.success(f"Welcome, {st.session_state.email}!")
+                if entered_otp == st.session_state.login_otp:
 
-    uploaded_file = st.file_uploader("Upload CSV file", type=["csv"])
+                    st.session_state.user = st.session_state.login_email
+                    st.session_state.otp_sent = False
+                    st.rerun()
+
+                else:
+                    st.error("Invalid OTP")
+
+            if st.button("Resend OTP"):
+
+                otp = generate_otp()
+
+                st.session_state.login_otp = otp
+
+                try:
+                    send_otp(
+                        st.session_state.login_email,
+                        otp
+                    )
+                    st.success("OTP resent")
+                except Exception as e:
+                    st.error(f"OTP failed: {e}")
+
+    with tab2:
+
+        new_email = st.text_input(
+            "Signup Email",
+            key="signup_email"
+        )
+
+        new_pass = st.text_input(
+            "Signup Password",
+            type="password",
+            key="signup_password"
+        )
+
+        if st.button("Create Account"):
+
+            ok, msg = signup_user(
+                new_email.strip(),
+                new_pass
+            )
+
+            if ok:
+                st.success(msg)
+            else:
+                st.error(msg)
+
+    st.stop()
+
+
+user = get_user(st.session_state.user)
+
+if not user:
+    st.session_state.user = None
+    st.rerun()
+
+plan = user["plan"]
+used = monthly_upload_count(user["email"])
+limit = "Unlimited" if plan == "pro" else FREE_LIMIT
+
+
+st.sidebar.success(user["email"])
+st.sidebar.info(f"Plan: {plan.upper()}")
+st.sidebar.info(f"Uploads Used: {used}/{limit}")
+
+page = st.sidebar.radio(
+    "Navigation",
+    ["Dashboard", "Profile", "Analytics"]
+)
+
+if st.sidebar.button("Logout"):
+    st.session_state.user = None
+    st.rerun()
+
+if user["email"] == ADMIN_EMAIL:
+    st.sidebar.subheader("👑 Admin Panel")
+    st.sidebar.write("Manage Users")
+    st.sidebar.write("Upgrade Plans")
+    st.sidebar.write("View Stats")
+
+
+if page == "Dashboard":
+
+    st.title("📈 Dashboard")
+
+    uploaded_file = st.file_uploader(
+        "Upload CSV File",
+        type=["csv"]
+    )
+
     if uploaded_file:
-        st.write("✅ File uploaded!")
-        report = analyze_csv(uploaded_file)
-        df = report["df"]
 
-        st.subheader("🔍 Shape of Data")
-        st.write(report["Shape"])
+        if plan == "free" and used >= FREE_LIMIT:
+            st.error(
+                "Free plan monthly limit reached."
+            )
+            st.stop()
 
-        st.subheader("📉 Null Values")
-        st.json(report["Null Values"])
+        try:
+            report = analyze_csv(uploaded_file)
+            df = report["df"]
 
-        st.subheader("📋 Descriptive Statistics")
-        st.markdown(report["Descriptive Stats"], unsafe_allow_html=True)
+            record_upload(
+                user["email"],
+                uploaded_file.name
+            )
 
-        st.subheader("📌 Correlation Matrix")
-        st.markdown(report["Correlation"], unsafe_allow_html=True)
+            st.success("File uploaded successfully!")
 
-       
-        numeric_cols = df.select_dtypes(include=['float64', 'int64']).columns.tolist()
+            st.subheader("📄 Data Preview")
+            st.dataframe(
+                df.head(100),
+                use_container_width=True
+            )
 
-        if numeric_cols:
-            st.subheader("📈 Visualize Data")
+            rows, cols = report["Shape"]
 
-            chart_type = st.selectbox("Choose chart type", ["Scatter Plot", "Histogram", "Box Plot", "Correlation Heatmap"])
+            c1, c2 = st.columns(2)
+            c1.metric("Rows", rows)
+            c2.metric("Columns", cols)
 
-            if chart_type == "Scatter Plot":
-                x_axis = st.selectbox("X-axis", numeric_cols)
-                y_axis = st.selectbox("Y-axis", numeric_cols, index=1 if len(numeric_cols) > 1 else 0)
-                fig = px.scatter(df, x=x_axis, y=y_axis, title=f"Scatter Plot of {x_axis} vs {y_axis}")
-                st.plotly_chart(fig, use_container_width=True)
+            st.subheader("📉 Null Values")
+            st.json(report["Null Values"])
 
-            elif chart_type == "Histogram":
-                col = st.selectbox("Select column for histogram", numeric_cols)
-                fig = px.histogram(df, x=col, nbins=30, title=f"Histogram of {col}")
-                st.plotly_chart(fig, use_container_width=True)
+            st.subheader("📊 Descriptive Statistics")
+            st.markdown(
+                report["Descriptive Stats"],
+                unsafe_allow_html=True
+            )
 
-            elif chart_type == "Box Plot":
-                col = st.selectbox("Select column for box plot", numeric_cols)
-                fig = px.box(df, y=col, title=f"Box Plot of {col}")
-                st.plotly_chart(fig, use_container_width=True)
-
-            elif chart_type == "Correlation Heatmap":
-                corr = df.corr(numeric_only=True)
-                fig = px.imshow(corr, text_auto=True, aspect="auto", title="Correlation Heatmap")
-                st.plotly_chart(fig, use_container_width=True)
-        else:
-            st.info("No numeric columns available for plotting.")
+            st.subheader("📌 Correlation Matrix")
+            st.markdown(
+                report["Correlation"],
+                unsafe_allow_html=True
+            )
 
 
-        if st.button("📄 Export Insights as PDF"):
-            pdf_bytes = pdf_report.generate_pdf(report, st.session_state.email)
+            numeric_cols = df.select_dtypes(
+                include=["int64", "float64"]
+            ).columns.tolist()
+
+            all_cols = df.columns.tolist()
+
+            if numeric_cols:
+
+                st.subheader("📈 Advanced Visualizations")
+
+                chart_type = st.selectbox(
+                    "Choose Chart Type",
+                    [
+                        "Scatter Plot",
+                        "Line Chart",
+                        "Bar Chart",
+                        "Histogram",
+                        "Box Plot",
+                        "Area Chart",
+                        "Pie Chart",
+                        "Violin Plot",
+                        "Density Heatmap",
+                        "Correlation Heatmap"
+                    ]
+                )
+
+                if chart_type == "Scatter Plot":
+                    x = st.selectbox("X Axis", numeric_cols)
+                    y = st.selectbox("Y Axis", numeric_cols)
+                    fig = px.scatter(df, x=x, y=y)
+
+                elif chart_type == "Line Chart":
+                    x = st.selectbox("X Axis", all_cols)
+                    y = st.selectbox("Y Axis", numeric_cols)
+                    fig = px.line(df, x=x, y=y)
+
+                elif chart_type == "Bar Chart":
+                    x = st.selectbox("X Axis", all_cols)
+                    y = st.selectbox("Y Axis", numeric_cols)
+                    fig = px.bar(df, x=x, y=y)
+
+                elif chart_type == "Histogram":
+                    col = st.selectbox("Column", numeric_cols)
+                    fig = px.histogram(df, x=col)
+
+                elif chart_type == "Box Plot":
+                    col = st.selectbox("Column", numeric_cols)
+                    fig = px.box(df, y=col)
+
+                elif chart_type == "Area Chart":
+                    x = st.selectbox("X Axis", all_cols)
+                    y = st.selectbox("Y Axis", numeric_cols)
+                    fig = px.area(df, x=x, y=y)
+
+                elif chart_type == "Pie Chart":
+                    names = st.selectbox("Category", all_cols)
+                    values = st.selectbox("Values", numeric_cols)
+                    fig = px.pie(df, names=names, values=values)
+
+                elif chart_type == "Violin Plot":
+                    col = st.selectbox("Column", numeric_cols)
+                    fig = px.violin(df, y=col, box=True)
+
+                elif chart_type == "Density Heatmap":
+                    x = st.selectbox("X Axis", numeric_cols)
+                    y = st.selectbox("Y Axis", numeric_cols)
+                    fig = px.density_heatmap(df, x=x, y=y)
+
+                elif chart_type == "Correlation Heatmap":
+                    corr = df.corr(numeric_only=True)
+                    fig = px.imshow(corr, text_auto=True)
+
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True
+                )
+
+            st.subheader("🤖 AI Insights")
+
+            insights = generate_ai_insights(df)
+
+            for item in insights:
+                st.info(item)
+
+   
+            pdf = generate_pdf(
+                report,
+                user["email"]
+            )
+
             st.download_button(
-                label="Download PDF Report",
-                data=pdf_bytes,
-                file_name="csv_analysis_report.pdf",
+                "📄 Download PDF Report",
+                data=pdf,
+                file_name="csv_report.pdf",
                 mime="application/pdf"
             )
 
-    if st.button("Logout"):
-        st.session_state.logged_in = False
-        st.session_state.page = "login"
-        st.session_state.email = ""
+        except Exception as e:
+            st.error(f"Error: {e}")
 
-if "page" not in st.session_state:
-    st.session_state.page = "login"
+elif page == "Profile":
 
-if not st.session_state.logged_in:
-    if st.session_state.page == "login":
-        login_page()
-    elif st.session_state.page == "signup":
-        signup_page()
-    elif st.session_state.page == "reset":
-        reset_page()
-else:
-    dashboard()
+    st.title("👤 User Profile")
 
+    st.write("📧 Email:", user["email"])
+    st.write("💎 Plan:", user["plan"].upper())
+    st.write("📂 Monthly Uploads:", used)
+
+
+elif page == "Analytics":
+
+    st.title("📊 Analytics Dashboard")
+
+    st.subheader("Uploads Trend")
+    st.line_chart([2, 5, 4, 8, 6, 10])
+
+    st.subheader("User Growth")
+    st.bar_chart([10, 20, 15, 28])

@@ -1,68 +1,101 @@
 from fpdf import FPDF
-import pandas as pd
 from datetime import datetime
+import pandas as pd
+
 
 class PDFReport(FPDF):
     def header(self):
-        self.set_font("Arial", "B", 14)
-        self.cell(0, 10, "CSV Analyzer Report", border=False, ln=True, align="C")
-        self.ln(10)
+        self.set_font("Arial", "B", 15)
+        self.cell(0, 10, "CSV Analyzer Report", border=0, ln=True, align="C")
+        self.ln(5)
 
     def footer(self):
         self.set_y(-15)
         self.set_font("Arial", "I", 8)
         self.cell(0, 10, f"Page {self.page_no()}", align="C")
 
+
+def add_section_title(pdf, title):
+    pdf.set_font("Arial", "B", 12)
+    pdf.ln(3)
+    pdf.cell(0, 10, title, ln=True)
+
+
+def add_text_line(pdf, text, font_size=10):
+    pdf.set_font("Arial", "", font_size)
+    pdf.multi_cell(0, 7, str(text))
+
+
+def add_dataframe_to_pdf(pdf, df, font_size=7):
+    pdf.set_font("Courier", "", font_size)
+
+    text = df.to_string()
+
+    for line in text.split("\n"):
+        if pdf.get_y() > 270:
+            pdf.add_page()
+            pdf.set_font("Courier", "", font_size)
+
+        pdf.multi_cell(0, 5, line)
+
+
 def generate_pdf(report, email):
     pdf = PDFReport()
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, f"User: {email}", ln=True)
-    pdf.cell(0, 10, f"Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", ln=True)
-    pdf.ln(10)
+    # User Info
+    add_section_title(pdf, "User Information")
+    add_text_line(pdf, f"User: {email}")
+    add_text_line(
+        pdf,
+        f"Generated On: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+    )
 
+    # Shape
+    add_section_title(pdf, "Dataset Shape")
+    add_text_line(pdf, f"Rows, Columns: {report['Shape']}")
 
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Data Shape:", ln=True)
-    pdf.set_font("Arial", "", 12)
-    pdf.cell(0, 10, str(report["Shape"]), ln=True)
-    pdf.ln(5)
+    # Null Values
+    add_section_title(pdf, "Null Values")
+    null_values = report["Null Values"]
 
+    if null_values:
+        for col, val in null_values.items():
+            add_text_line(pdf, f"{col}: {val}")
+    else:
+        add_text_line(pdf, "No null values found.")
 
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Null Values:", ln=True)
-    pdf.set_font("Arial", "", 10)
-    for col, val in report["Null Values"].items():
-        pdf.cell(0, 8, f"{col}: {val}", ln=True)
-    pdf.ln(5)
+    # Descriptive Statistics
+    add_section_title(pdf, "Descriptive Statistics")
 
-
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Descriptive Statistics:", ln=True)
-    pdf.set_font("Arial", "", 8)
-
-  
     try:
-        desc_df = report["df"].describe(include='all')
-        desc_str = desc_df.round(3).to_string()
-        for line in desc_str.split('\n'):
-            pdf.cell(0, 6, line, ln=True)
+        desc_df = report["df"].describe(include="all").fillna("").round(3)
+        add_dataframe_to_pdf(pdf, desc_df)
     except Exception as e:
-        pdf.cell(0, 8, f"Error generating stats: {e}", ln=True)
-    pdf.ln(5)
+        add_text_line(pdf, f"Unable to generate stats: {e}")
 
+    # Correlation Matrix
+    add_section_title(pdf, "Correlation Matrix")
 
-    pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 10, "Correlation Matrix:", ln=True)
-    pdf.set_font("Arial", "", 8)
     try:
-        corr_df = report["df"].corr(numeric_only=True).round(3)
-        corr_str = corr_df.to_string()
-        for line in corr_str.split('\n'):
-            pdf.cell(0, 6, line, ln=True)
+        corr_df = report["df"].corr(numeric_only=True).fillna(0).round(3)
+
+        if corr_df.empty:
+            add_text_line(pdf, "No numeric columns found.")
+        else:
+            add_dataframe_to_pdf(pdf, corr_df)
+
     except Exception as e:
-        pdf.cell(0, 8, f"Error generating correlation: {e}", ln=True)
+        add_text_line(pdf, f"Unable to generate correlation: {e}")
 
+    # Column Names
+    add_section_title(pdf, "Column Names")
 
-    return pdf.output(dest='S').encode('latin1')
+    try:
+        cols = ", ".join(report["df"].columns.tolist())
+        add_text_line(pdf, cols)
+    except Exception:
+        add_text_line(pdf, "Unable to fetch columns.")
+
+    return pdf.output(dest="S").encode("latin1")

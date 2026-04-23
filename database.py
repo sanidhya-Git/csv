@@ -1,14 +1,196 @@
-import psycopg2
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from contextlib import contextmanager
+from dotenv import load_dotenv
 
-def create_user_table():
-    conn = psycopg2.connect(os.environ["DATABASE_URL"], sslmode='require')
-    cursor = conn.cursor()
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS users (
+load_dotenv()
+
+DATABASE_URL = os.getenv("DATABASE_URL")
+
+if not DATABASE_URL:
+    raise ValueError("DATABASE_URL not found in environment variables")
+
+
+@contextmanager
+def conn():
+    connection = psycopg2.connect(
+        DATABASE_URL,
+        sslmode="require"
+    )
+
+    try:
+        yield connection
+        connection.commit()
+
+    except Exception:
+        connection.rollback()
+        raise
+
+    finally:
+        connection.close()
+
+
+def init_db():
+    with conn() as db:
+        cur = db.cursor()
+
+        # USERS TABLE
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS users(
             email TEXT PRIMARY KEY,
-            password TEXT NOT NULL
+            password_hash TEXT NOT NULL,
+            plan TEXT DEFAULT 'free'
         )
-    ''')
-    conn.commit()
-    conn.close()
+        """)
+
+        # UPLOADS TABLE
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS uploads(
+            id SERIAL PRIMARY KEY,
+            email TEXT NOT NULL,
+            filename TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+        """)
+
+        # OLD COLUMN MIGRATION
+        try:
+            cur.execute("""
+            ALTER TABLE users
+            RENAME COLUMN password TO password_hash
+            """)
+        except Exception:
+            pass
+
+        # ADD PLAN COLUMN
+        try:
+            cur.execute("""
+            ALTER TABLE users
+            ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free'
+            """)
+        except Exception:
+            pass
+
+
+def create_user(email, password_hash):
+    try:
+        with conn() as db:
+            cur = db.cursor()
+
+            cur.execute(
+                """
+                INSERT INTO users(email, password_hash)
+                VALUES(%s, %s)
+                """,
+                (
+                    email.strip().lower(),
+                    password_hash
+                )
+            )
+
+        return True, "Account created successfully"
+
+    except psycopg2.errors.UniqueViolation:
+        return False, "User already exists"
+
+    except Exception as e:
+        return False, f"Signup failed: {e}"
+
+
+def fetch_password_hash(email):
+    with conn() as db:
+        cur = db.cursor()
+
+        cur.execute(
+            """
+            SELECT password_hash
+            FROM users
+            WHERE LOWER(email)=LOWER(%s)
+            """,
+            (email.strip(),)
+        )
+
+        row = cur.fetchone()
+
+        return row[0] if row else None
+
+
+def get_user(email):
+    with conn() as db:
+        cur = db.cursor(cursor_factory=RealDictCursor)
+
+        cur.execute(
+            """
+            SELECT email, plan
+            FROM users
+            WHERE LOWER(email)=LOWER(%s)
+            """,
+            (email.strip(),)
+        )
+
+        return cur.fetchone()
+
+def record_upload(email, filename):
+    with conn() as db:
+        cur = db.cursor()
+
+        cur.execute(
+            """
+            INSERT INTO uploads(email, filename)
+            VALUES(%s, %s)
+            """,
+            (
+                email.strip().lower(),
+                filename
+            )
+        )
+
+
+def monthly_upload_count(email):
+    with conn() as db:
+        cur = db.cursor()
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM uploads
+            WHERE LOWER(email)=LOWER(%s)
+            AND date_trunc('month', created_at)
+            = date_trunc('month', CURRENT_TIMESTAMP)
+            """,
+            (email.strip(),)
+        )
+
+        row = cur.fetchone()
+
+        return row[0] if row else 0
+
+def update_user_plan(email, plan):
+    with conn() as db:
+        cur = db.cursor()
+
+        cur.execute(
+            """
+            UPDATE users
+            SET plan=%s
+            WHERE LOWER(email)=LOWER(%s)
+            """,
+            (
+                plan.strip().lower(),
+                email.strip()
+            )
+        )
+
+
+def total_users():
+    with conn() as db:
+        cur = db.cursor()
+
+        cur.execute(
+            "SELECT COUNT(*) FROM users"
+        )
+
+        row = cur.fetchone()
+
+        return row[0] if row else 0
