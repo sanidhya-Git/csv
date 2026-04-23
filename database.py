@@ -1,8 +1,10 @@
 import os
 import psycopg2
+import bcrypt
 from psycopg2.extras import RealDictCursor
 from contextlib import contextmanager
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -10,6 +12,10 @@ DATABASE_URL = os.getenv("DATABASE_URL")
 
 if not DATABASE_URL:
     raise ValueError("DATABASE_URL not found in environment variables")
+
+
+ADMIN_EMAIL = "admin@csv.com"
+ADMIN_PASSWORD = "admin@123"
 
 
 @contextmanager
@@ -29,6 +35,13 @@ def conn():
 
     finally:
         connection.close()
+
+
+def hash_password(password):
+    return bcrypt.hashpw(
+        password.encode(),
+        bcrypt.gensalt()
+    ).decode()
 
 
 def init_db():
@@ -54,25 +67,58 @@ def init_db():
         )
         """)
 
-        # OLD COLUMN MIGRATION
+        # commit safe point
+        db.commit()
+
+        # old migration safely
         try:
             cur.execute("""
             ALTER TABLE users
             RENAME COLUMN password TO password_hash
             """)
-        except Exception:
-            pass
+            db.commit()
+        except:
+            db.rollback()
 
-        # ADD PLAN COLUMN
+        # add column safely
         try:
             cur.execute("""
             ALTER TABLE users
             ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free'
             """)
-        except Exception:
-            pass
+            db.commit()
+        except:
+            db.rollback()
 
+        # admin create
+        try:
+            cur.execute(
+                """
+                SELECT email FROM users
+                WHERE LOWER(email)=LOWER(%s)
+                """,
+                ("admin@csv.com",)
+            )
 
+            if not cur.fetchone():
+
+                admin_hash = hash_password("admin@123")
+
+                cur.execute(
+                    """
+                    INSERT INTO users(email,password_hash,plan)
+                    VALUES(%s,%s,%s)
+                    """,
+                    (
+                        "admin@csv.com",
+                        admin_hash,
+                        "pro"
+                    )
+                )
+                db.commit()
+
+        except:
+            db.rollback()
 def create_user(email, password_hash):
     try:
         with conn() as db:
@@ -80,8 +126,8 @@ def create_user(email, password_hash):
 
             cur.execute(
                 """
-                INSERT INTO users(email, password_hash)
-                VALUES(%s, %s)
+                INSERT INTO users(email,password_hash)
+                VALUES(%s,%s)
                 """,
                 (
                     email.strip().lower(),
@@ -118,11 +164,13 @@ def fetch_password_hash(email):
 
 def get_user(email):
     with conn() as db:
-        cur = db.cursor(cursor_factory=RealDictCursor)
+        cur = db.cursor(
+            cursor_factory=RealDictCursor
+        )
 
         cur.execute(
             """
-            SELECT email, plan
+            SELECT email,plan
             FROM users
             WHERE LOWER(email)=LOWER(%s)
             """,
@@ -131,14 +179,15 @@ def get_user(email):
 
         return cur.fetchone()
 
+
 def record_upload(email, filename):
     with conn() as db:
         cur = db.cursor()
 
         cur.execute(
             """
-            INSERT INTO uploads(email, filename)
-            VALUES(%s, %s)
+            INSERT INTO uploads(email,filename)
+            VALUES(%s,%s)
             """,
             (
                 email.strip().lower(),
@@ -156,8 +205,8 @@ def monthly_upload_count(email):
             SELECT COUNT(*)
             FROM uploads
             WHERE LOWER(email)=LOWER(%s)
-            AND date_trunc('month', created_at)
-            = date_trunc('month', CURRENT_TIMESTAMP)
+            AND date_trunc('month',created_at)
+            = date_trunc('month',CURRENT_TIMESTAMP)
             """,
             (email.strip(),)
         )
@@ -165,6 +214,7 @@ def monthly_upload_count(email):
         row = cur.fetchone()
 
         return row[0] if row else 0
+
 
 def update_user_plan(email, plan):
     with conn() as db:

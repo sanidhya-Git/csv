@@ -1,13 +1,14 @@
 import streamlit as st
 import plotly.express as px
 
-from auth import signup_user
+from auth import signup_user, login_user
 from otp import generate_otp, send_otp
 from database import (
     init_db,
     get_user,
     record_upload,
-    monthly_upload_count
+    monthly_upload_count,
+    total_users
 )
 from analyze import analyze_csv
 from ai import generate_ai_insights
@@ -16,142 +17,155 @@ from pdf_report import generate_pdf
 FREE_LIMIT = 15
 ADMIN_EMAIL = "admin@csv.com"
 
+
 st.set_page_config(
     page_title="CSV Analyzer",
     page_icon="📊",
     layout="wide"
 )
 
-
 st.markdown("""
 <style>
-.stApp {
-    background-color: #0e1117;
-    color: white;
-}
-
-section[data-testid="stSidebar"] {
-    background-color: #111827;
-}
-
+.stApp {background-color:#0e1117;color:white;}
+section[data-testid="stSidebar"] {background:#111827;}
 div[data-testid="stMetric"] {
-    background: #1f2937;
-    padding: 15px;
-    border-radius: 12px;
+    background:#1f2937;
+    padding:15px;
+    border-radius:12px;
 }
-
 .stButton > button {
-    width: 100%;
-    border-radius: 8px;
+    width:100%;
+    border-radius:8px;
 }
-
-table {
-    color: white !important;
-}
+table {color:white !important;}
 </style>
 """, unsafe_allow_html=True)
 
-
 init_db()
 
-if "user" not in st.session_state:
-    st.session_state.user = None
+defaults = {
+    "user": None,
+    "signup_otp_sent": False,
+    "signup_verified": False,
+    "signup_otp": "",
+    "signup_email": ""
+}
 
-if "otp_sent" not in st.session_state:
-    st.session_state.otp_sent = False
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
 
-if "login_otp" not in st.session_state:
-    st.session_state.login_otp = ""
-
-if "login_email" not in st.session_state:
-    st.session_state.login_email = ""
 
 if not st.session_state.user:
 
     st.title("📊 CSV Analyzer V2")
     st.caption("Upload CSV • Analyze • Visualize • Export")
 
-    tab1, tab2 = st.tabs(["OTP Login", "Signup"])
+    tab1, tab2 = st.tabs(["Login", "Signup"])
 
+    # ================= LOGIN =================
 
     with tab1:
 
-        email = st.text_input("Email", key="login_email_input")
+        email = st.text_input(
+            "Email",
+            key="login_email_input"
+        )
 
-        if not st.session_state.otp_sent:
+        password = st.text_input(
+            "Password",
+            type="password",
+            key="login_password_input"
+        )
+
+        if st.button("Login"):
+
+            if login_user(
+                email.strip(),
+                password
+            ):
+                st.session_state.user = email.strip()
+                st.rerun()
+            else:
+                st.error("Invalid email or password")
+
+    # ================= SIGNUP =================
+
+    with tab2:
+
+        signup_email = st.text_input(
+            "Email",
+            key="signup_email_input"
+        )
+
+        # STEP 1 SEND OTP
+        if not st.session_state.signup_otp_sent:
 
             if st.button("Send OTP"):
 
-                if email.strip() == "":
+                if signup_email.strip() == "":
                     st.error("Enter email first")
 
                 else:
                     otp = generate_otp()
 
-                    st.session_state.login_otp = otp
-                    st.session_state.login_email = email.strip()
-                    st.session_state.otp_sent = True
+                    st.session_state.signup_email = signup_email.strip()
+                    st.session_state.signup_otp = otp
+                    st.session_state.signup_otp_sent = True
 
                     try:
-                        send_otp(email.strip(), otp)
-                        st.success("OTP sent successfully")
+                        send_otp(
+                            signup_email.strip(),
+                            otp
+                        )
+                        st.success("OTP sent")
+                        st.rerun()
                     except Exception as e:
                         st.error(f"OTP failed: {e}")
 
-        else:
+        # STEP 2 VERIFY OTP
+        elif not st.session_state.signup_verified:
 
-            entered_otp = st.text_input("Enter OTP")
+            entered = st.text_input(
+                "Enter OTP",
+                key="verify_signup_otp"
+            )
 
             if st.button("Verify OTP"):
 
-                if entered_otp == st.session_state.login_otp:
-
-                    st.session_state.user = st.session_state.login_email
-                    st.session_state.otp_sent = False
+                if entered == st.session_state.signup_otp:
+                    st.session_state.signup_verified = True
+                    st.success("Email verified")
                     st.rerun()
-
                 else:
                     st.error("Invalid OTP")
 
-            if st.button("Resend OTP"):
+        # STEP 3 PASSWORD
+        else:
 
-                otp = generate_otp()
-
-                st.session_state.login_otp = otp
-
-                try:
-                    send_otp(
-                        st.session_state.login_email,
-                        otp
-                    )
-                    st.success("OTP resent")
-                except Exception as e:
-                    st.error(f"OTP failed: {e}")
-
-    with tab2:
-
-        new_email = st.text_input(
-            "Signup Email",
-            key="signup_email"
-        )
-
-        new_pass = st.text_input(
-            "Signup Password",
-            type="password",
-            key="signup_password"
-        )
-
-        if st.button("Create Account"):
-
-            ok, msg = signup_user(
-                new_email.strip(),
-                new_pass
+            password = st.text_input(
+                "Create Password",
+                type="password",
+                key="signup_password_input"
             )
 
-            if ok:
-                st.success(msg)
-            else:
-                st.error(msg)
+            if st.button("Create Account"):
+
+                ok, msg = signup_user(
+                    st.session_state.signup_email,
+                    password
+                )
+
+                if ok:
+                    st.success(msg)
+
+                    st.session_state.signup_otp_sent = False
+                    st.session_state.signup_verified = False
+                    st.session_state.signup_otp = ""
+                    st.session_state.signup_email = ""
+
+                else:
+                    st.error(msg)
 
     st.stop()
 
@@ -180,11 +194,13 @@ if st.sidebar.button("Logout"):
     st.session_state.user = None
     st.rerun()
 
-if user["email"] == ADMIN_EMAIL:
+
+
+if user["email"].lower() == ADMIN_EMAIL:
+
     st.sidebar.subheader("👑 Admin Panel")
-    st.sidebar.write("Manage Users")
-    st.sidebar.write("Upgrade Plans")
-    st.sidebar.write("View Stats")
+    st.sidebar.write(f"Total Users: {total_users()}")
+    st.sidebar.write("Admin Access Enabled")
 
 
 if page == "Dashboard":
@@ -199,9 +215,7 @@ if page == "Dashboard":
     if uploaded_file:
 
         if plan == "free" and used >= FREE_LIMIT:
-            st.error(
-                "Free plan monthly limit reached."
-            )
+            st.error("Free plan monthly limit reached.")
             st.stop()
 
         try:
@@ -242,6 +256,7 @@ if page == "Dashboard":
                 unsafe_allow_html=True
             )
 
+            # ================= CHARTS =================
 
             numeric_cols = df.select_dtypes(
                 include=["int64", "float64"]
@@ -320,6 +335,8 @@ if page == "Dashboard":
                     use_container_width=True
                 )
 
+            # ================= AI =================
+
             st.subheader("🤖 AI Insights")
 
             insights = generate_ai_insights(df)
@@ -327,7 +344,8 @@ if page == "Dashboard":
             for item in insights:
                 st.info(item)
 
-   
+            # ================= PDF =================
+
             pdf = generate_pdf(
                 report,
                 user["email"]
@@ -343,10 +361,10 @@ if page == "Dashboard":
         except Exception as e:
             st.error(f"Error: {e}")
 
+
 elif page == "Profile":
 
     st.title("👤 User Profile")
-
     st.write("📧 Email:", user["email"])
     st.write("💎 Plan:", user["plan"].upper())
     st.write("📂 Monthly Uploads:", used)
